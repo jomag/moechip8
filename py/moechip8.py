@@ -1,3 +1,6 @@
+# TODO:
+# - Validate the complex DRW op. Does it handle wrapping correctly, etc?
+
 import argparse
 from collections import deque
 from time import sleep, time_ns
@@ -134,42 +137,45 @@ def format_opcode(op):
 
 
 class PyGameDisplay:
+    width: int
+    height: int
+    zoom: int
+
     _key_map = [
-        pygame.K_q,
-        pygame.K_a,
-        pygame.K_z,
-        pygame.K_w,
-        pygame.K_s,
-        pygame.K_x,
-        pygame.K_e,
-        pygame.K_d,
-        pygame.K_c,
-        pygame.K_r,
-        pygame.K_f,
-        pygame.K_v,
-        pygame.K_t,
-        pygame.K_g,
-        pygame.K_b,
-        pygame.K_y,
+        pygame.K_x,  # 0
+        pygame.K_1,  # 1
+        pygame.K_2,  # 2
+        pygame.K_3,  # 3
+        pygame.K_q,  # 4
+        pygame.K_w,  # 5
+        pygame.K_e,  # 6
+        pygame.K_a,  # 7
+        pygame.K_s,  # 8
+        pygame.K_d,  # 9
+        pygame.K_z,  # A
+        pygame.K_c,  # B
+        pygame.K_4,  # C
+        pygame.K_r,  # D
+        pygame.K_f,  # E
+        pygame.K_v,  # F
     ]
 
-    WIDTH = 64
-    HEIGHT = 32
-    SCALE = 20
-
-    def __init__(self):
-        self.buf = [bytearray(self.WIDTH) for n in range(self.HEIGHT)]
-        self.window = None
+    def __init__(self, width=64, height=32, zoom=5):
+        self.zoom = zoom
+        self.width = width
+        self.height = height
+        self.buf = [bytearray(self.width) for n in range(self.height)]
+        # self.window = None
         self.keys = [False] * 16
 
     def clear(self):
-        self.buf = [bytearray(self.WIDTH) for n in range(self.HEIGHT)]
+        self.buf = [bytearray(self.width) for n in range(self.height)]
 
     def setup(self):
         pygame.init()
-        resolution = (self.WIDTH * self.SCALE, self.HEIGHT * self.SCALE)
+        resolution = (self.width * self.zoom, self.height * self.zoom)
         pygame.display.set_mode(resolution)
-        self.surface = pygame.Surface((self.WIDTH, self.HEIGHT))
+        self.surface = pygame.Surface((self.width, self.height))
 
     def _handle_event(self, evt):
         if evt.type == pygame.QUIT:
@@ -232,20 +238,39 @@ class PyGameDisplay:
         screen.blit(scaled, (0, 0))
         pygame.display.flip()
 
-    def sprite(self, x, y, sprite):
+    def sprite(self, x: int, y: int, sprite: bytes, wrap: bool) -> int:
+        collision = False
+
+        if not wrap and y < 0:
+            sprite = sprite[-y:]
+            y = 0
+
         for bmp in sprite:
-            y = y & (self.HEIGHT - 1)
+            if wrap:
+                y = y % self.height
+            elif y >= self.height:
+                break
+
             bx = x
             for bit in [128, 64, 32, 16, 8, 4, 2, 1]:
-                bx = bx & (self.WIDTH - 1)
-                c = self.buf[y][bx]
-                n = bmp & bit
-                if (c and not n) or (n and not c):
-                    self.buf[y][bx] = True
-                else:
-                    self.buf[y][bx] = False
+                if wrap:
+                    bx = bx % self.width
+                elif bx >= self.width:
+                    break
+
+                if wrap or bx >= 0:
+                    c = self.buf[y][bx]
+                    n = bmp & bit
+                    if c and n:
+                        collision = True
+                    if (c and not n) or (n and not c):
+                        self.buf[y][bx] = True
+                    else:
+                        self.buf[y][bx] = False
+
                 bx = bx + 1
             y = y + 1
+        return collision
 
 
 class IllegalOp(Exception):
@@ -256,6 +281,13 @@ class IllegalOp(Exception):
 
 
 class VM:
+    display: PyGameDisplay
+    pc: int
+    i: int
+    delay_timer: int
+    sound_timer: int
+    wrap: bool
+
     digits = [
         [0xF0, 0x90, 0x90, 0x90, 0xF0],  # 0
         [0x20, 0x60, 0x20, 0x20, 0x70],  # 1
@@ -275,11 +307,14 @@ class VM:
         [0xF0, 0x80, 0xF0, 0x80, 0x80],  # F
     ]
 
-    def __init__(self, display=None):
+    def __init__(self, display: PyGameDisplay, frequency=500, wrap=False):
         self.ram = bytearray(MEMORY_SIZE)
         self.display = display
         self.stack = deque()
         self.reg = bytearray(REGISTER_COUNT)
+        self.frequency = frequency
+        self.timer_frequency = 60
+        self.wrap = wrap
 
         # Copy digits to interpreter area of the RAM
         idx = 0
@@ -314,7 +349,7 @@ class VM:
     def disassemble(self, start, length):
         for i in range(0, length, 2):
             op = (self.ram[start + i] << 8) | self.ram[start + i + 1]
-            adr = i + start
+            adr = (i + start) & 0xFFFF
             print(f"{adr:04X}: {op:04X} {format_opcode(op)}")
 
     def step(self):
@@ -326,41 +361,38 @@ class VM:
         op = (self.ram[self.pc] << 8) | self.ram[self.pc + 1]
         self.pc = self.pc + 2
 
-        prefix = (op & 0xF000) >> 12
         nnn = op & 0xFFF
         x = (op & 0xF00) >> 8
         y = (op & 0x0F0) >> 4
         kk = op & 0xFF
 
-        if prefix == 0x00:
-            if op == 0x00E0:  # CLS
+        if 0x0000 == op & 0xF000:
+            if 0x00E0 == op:  # CLS
                 self.display.clear()
-            if op == 0x00EE:  # RET
+            elif 0x00EE == op:  # RET
                 self.pc = self.stack.pop()
             else:  # SYS addr
                 # This instruction is only used on the old computers
                 # on which Chip-8 was originally implemented. It is
                 # ignored by modern interpreters.
                 pass
-        elif prefix == 0x1:  # JP addr
+        elif 0x1000 == op & 0xF000:  # JP addr
             self.pc = nnn
-        elif prefix == 0x2:  # CALL addr
+        elif 0x2000 == op & 0xF000:  # CALL addr
             self.stack.append(self.pc)
             self.pc = nnn
-        elif prefix == 0x3:  # SE Vx, byte
+        elif 0x3000 == op & 0xF000:  # SE Vx, byte
             if self.reg[x] == kk:
                 self.pc += 2
-        elif prefix == 0x4:  # SNE Vx, byte
+        elif 0x4000 == op & 0xF000:  # SNE Vx, byte
             if self.reg[x] != kk:
                 self.pc += 2
-        elif prefix == 0x5:
-            if op & 0xF != 0:
-                raise IllegalOp(op, op_addr)
+        elif 0x5000 == op & 0xF00F:  # SE Vx, Vy
             if self.reg[x] == self.reg[y]:
                 self.pc += 2
-        elif prefix == 0x6:  # LD Vx, byte
+        elif 0x6000 == op & 0xF000:  # LD Vx, byte
             self.reg[x] = kk
-        elif prefix == 0x7:  # ADD Vx, byte
+        elif 0x7000 == op & 0xF000:  # ADD Vx, byte
             self.reg[x] = (self.reg[x] + kk) & 0xFF
         elif 0x8000 == op & 0xF00F:  # LD Vx, Vy
             self.reg[x] = self.reg[y]
@@ -375,79 +407,80 @@ class VM:
             self.reg[x] = r & 0xFF
             self.reg[0xF] = 1 if r > 0xFF else 0
         elif 0x8005 == op & 0xF00F:  # SUB Vx, Vy
-            r = self.reg[x] - self.reg[y]
-            self.reg[x] = r & 0xFF
-            self.reg[0xF] = 0 if r < 0 else 1
+            self.reg[0xF] = 1 if self.reg[x] > self.reg[y] else 0
+            self.reg[x] = (self.reg[x] - self.reg[y]) & 0xFF
         elif 0x8006 == op & 0xF00F:  # SHR Vx {, Vy}
-            # Originaly undocumented. See 0x800E.
-            self.reg[0xF] = self.reg[x] & 1
-            self.reg[x] = self.reg[x] >> 1
-        elif 0x800E == op & 0xF00F:  # SHL Vx {, Vy}
             # Note that this op was originally undocumented and
             # the spec is a bit unclear regarding the Vy register.
+            self.reg[0xF] = self.reg[x] & 1
+            self.reg[x] = self.reg[x] >> 1
+        elif 0x8007 == op & 0xF00F:  # SUBN Vx, Vy
+            self.reg[0xF] = 1 if self.reg[y] > self.reg[x] else 0
+            self.reg[x] = (self.reg[y] - self.reg[x]) & 0xFF
+        elif 0x800E == op & 0xF00F:  # SHL Vx {, Vy}
+            # Originaly undocumented. See 0x8006.
             self.reg[0xF] = self.reg[x] >> 7
             self.reg[x] = (self.reg[x] & 0x7F) << 1
-        elif 0x8007 == op & 0xF00F:  # SUBN Vx, Vy
-            r = self.reg[y] - self.reg[x]
-            self.reg[x] = r & 0xFF
-            self.reg[0xF] = 0 if r < 0 else 1
         elif 0x9000 == op & 0xF00F:  # SNE Vx, Vy
             if self.reg[x] != self.reg[y]:
                 self.pc += 2
-        elif prefix == 0xA:  # LD I, addr
+        elif 0xA000 == op & 0xF000:  # LD I, addr
             self.i = nnn
-        elif prefix == 0xC:  # RND Vx, byte
+        elif 0xC000 == op & 0xF000:  # RND Vx, byte
             self.reg[x] = randint(0, 255) & kk
-        elif prefix == 0xD:  # DRW Vx, Vy, nibble
+        elif 0xD000 == op & 0xF000:  # DRW Vx, Vy, nibble
             q = op & 0xF
-            self.display.sprite(self.reg[x], self.reg[y], self.ram[self.i : self.i + q])
-            # raise Exception("%d %s" % (q, str(self.ram[self.i:self.i + q])))
+            self.reg[0xF] = self.display.sprite(
+                self.reg[x],
+                self.reg[y],
+                self.ram[self.i : self.i + q],
+                self.wrap,
+            )
         elif 0xE09E == op & 0xF0FF:  # SKP Vx
             if self.display.keys[self.reg[x]]:
                 self.pc += 2
-        elif op & 0xF0FF == 0xE0A1:  # SKNP Vx
+        elif 0xE0A1 == op & 0xF0FF:  # SKNP Vx
             if not self.display.keys[self.reg[x]]:
                 self.pc += 2
-        elif op & 0xF0FF == 0xF00A:  # LD Vx, K
-            self.reg[x] = self.display.wait_for_key()
-        elif op & 0xF0FF == 0xF007:  # LD Vx, DT
+        elif 0xF007 == op & 0xF0FF:  # LD Vx, DT
             self.reg[x] = self.delay_timer
-        elif op & 0xF0FF == 0xF015:  # LD DT, Vx
+        elif 0xF00A == op & 0xF0FF:  # LD Vx, K
+            self.reg[x] = self.display.wait_for_key()
+        elif 0xF015 == op & 0xF0FF:  # LD DT, Vx
             self.delay_timer = self.reg[x]
-        elif op & 0xF0FF == 0xF018:  # LD ST, Vx
+        elif 0xF018 == op & 0xF0FF:  # LD ST, Vx
             self.sound_timer = self.reg[x]
-        elif op & 0xF0FF == 0xF01E:  # ADD I, Vx
-            self.i = (self.i + self.reg[x]) & 0xFF
-        elif op & 0xF0FF == 0xF033:  # LD B, Vx
+        elif 0xF01E == op & 0xF0FF:  # ADD I, Vx
+            self.i = (self.i + self.reg[x]) & 0xFFFF
+        elif 0xF029 == op & 0xF0FF:  # LD F, Vx
+            # The digits are stored at address 0x0000,
+            # and each digit is 8x5 bits (5 bytes)
+            self.i = self.reg[x] * 5
+        elif 0xF033 == op & 0xF0FF:  # LD B, Vx
             # Store BCD representation of Vx at I, I+1 and I+2
             v = self.reg[x]
             self.ram[self.i] = v // 100
             self.ram[self.i + 1] = (v % 100) // 10
             self.ram[self.i + 2] = v % 10
-        elif op & 0xF0FF == 0xF055:  # LD [I], Vx
+        elif 0xF055 == op & 0xF0FF:  # LD [I], Vx
             # Store registers V0 through Vx in memory starting at I
             for n in range(0, x + 1):
                 self.ram[self.i + n] = self.reg[n]
-        elif op & 0xF0FF == 0xF065:  # LD, Vx, [I]
+        elif 0xF065 == op & 0xF065:  # LD, Vx, [I]
             # Read registers V0 through Vx from memory starting at I
             for n in range(0, x + 1):
                 self.reg[n] = self.ram[self.i + n]
-        elif op & 0xF0FF == 0xF029:  # LD F, Vx
-            # The digits are stored at address 0x0000,
-            # and each digit is 8x5 bits (5 bytes)
-            self.i = self.reg[x] * 5
         else:
             raise IllegalOp(op, op_addr)
 
-    def jump(self, pc):
-        self.pc = pc
-
     def run(self):
+        timer_interval = 1_000_000_000 / self.timer_frequency
+        print(f"Interval: {timer_interval}")
         ts = time_ns()
         while True:
             self.step()
             now = time_ns()
-            if now - ts > 16_666_667:
+            if now - ts >= timer_interval:
                 self.display.render()
                 self.display.reset_keypad()
                 if self.delay_timer > 0:
@@ -455,15 +488,17 @@ class VM:
                 if self.sound_timer > 0:
                     self.sound_timer -= 1
                 ts = now
-            sleep(0.0001)
+
+            # This is a terrible way to get correct timing.
+            sleep(1.0 / self.frequency)
 
 
-def start(rom: str, start_address: int):
-    display = PyGameDisplay()
-    vm = VM(display)
-    length = vm.load(rom, start_address)
-    vm.jump(start_address)
-    vm.disassemble(start_address, length)
+def start(args):
+    display = PyGameDisplay(zoom=args.zoom)
+    vm = VM(display, frequency=args.freq, wrap=args.wrap)
+    length = vm.load(args.rom, args.start)
+    vm.pc = args.start
+    vm.disassemble(args.start, length)
     display.setup()
 
     try:
@@ -477,20 +512,40 @@ def start(rom: str, start_address: int):
         raise e
 
 
+autoint = lambda x: int(x, 0)
 parser = argparse.ArgumentParser(
     description="Moe CHIP-8 emulator (Python version)",
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
 )
-
-parser.add_argument("rom", help="ROM file to load")
+parser.add_argument(
+    "rom",
+    help="ROM file to load",
+)
 parser.add_argument(
     "--start",
     "-s",
     help="Start address",
     default="0x200",
-    type=lambda x: int(x, 0),
+    type=autoint,
+)
+parser.add_argument(
+    "--zoom",
+    "-z",
+    help="Zoom pixels",
+    default="5",
+    type=autoint,
+)
+parser.add_argument(
+    "--freq",
+    "-f",
+    help="Frequency in Hz",
+    default=500,
+    type=autoint,
+)
+parser.add_argument(
+    "--wrap", "-w", help="Wrap sprites (required by some games)", default=False
 )
 
 args = parser.parse_args()
 
-start(args.rom, args.start)
+start(args)
