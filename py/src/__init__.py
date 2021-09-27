@@ -1,15 +1,14 @@
-
+import argparse
 from collections import deque
 from time import sleep, time_ns
 from random import randint
-import curses
-import sys
-from tkinter import Tk, Canvas, NORMAL, HIDDEN
+import pygame
 
 __NAME__ = "MoeChip8"
 
 MEMORY_SIZE = 4096
 REGISTER_COUNT = 16
+
 
 def format_opcode(op):
     t = (op & 0xF000) >> 12
@@ -46,28 +45,20 @@ def format_opcode(op):
         if op == 0xEE:
             return f"RET"
         return f"SYS  {nnn}"
-
     if t == 1:
         return f"JP   {nnn}"
-
     if t == 2:
         return f"CALL {nnn}"
-
     if t == 3:
         return f"SE   {vx}, {kk}"
-
     if t == 4:
         return f"SNE  {vx}, {kk}"
-
     if t == 5:
         return f"SE   {vx}, {vy}"
-
     if t == 6:
         return f"LD   {vx}, {kk}"
-
     if t == 7:
         return f"ADD  {vx}, {kk}"
-
     if t == 8:
         q = op & 0xF
         if q == 0x0:
@@ -141,17 +132,38 @@ def format_opcode(op):
 
     return invalid
 
-import pygame
 
 class PyGameDisplay:
+    _key_map = [
+        pygame.K_q,
+        pygame.K_a,
+        pygame.K_z,
+        pygame.K_w,
+        pygame.K_s,
+        pygame.K_x,
+        pygame.K_e,
+        pygame.K_d,
+        pygame.K_c,
+        pygame.K_r,
+        pygame.K_f,
+        pygame.K_v,
+        pygame.K_t,
+        pygame.K_g,
+        pygame.K_b,
+        pygame.K_y,
+    ]
+
     WIDTH = 64
     HEIGHT = 32
-    SCALE = 6
+    SCALE = 20
 
     def __init__(self):
         self.buf = [bytearray(self.WIDTH) for n in range(self.HEIGHT)]
         self.window = None
         self.keys = [False] * 16
+
+    def clear(self):
+        self.buf = [bytearray(self.WIDTH) for n in range(self.HEIGHT)]
 
     def setup(self):
         pygame.init()
@@ -159,26 +171,36 @@ class PyGameDisplay:
         pygame.display.set_mode(resolution)
         self.surface = pygame.Surface((self.WIDTH, self.HEIGHT))
 
-    def update(self):
-        key_map = [
-            pygame.K_q, pygame.K_a, pygame.K_z, pygame.K_w,
-            pygame.K_s, pygame.K_x, pygame.K_e, pygame.K_d,
-            pygame.K_c, pygame.K_r, pygame.K_f, pygame.K_v,
-            pygame.K_t, pygame.K_g, pygame.K_b, pygame.K_y
-        ]
-
-        event = pygame.event.poll()
-        if event.type == pygame.QUIT:
+    def _handle_event(self, evt):
+        if evt.type == pygame.QUIT:
             raise SystemExit
-        if event.type == pygame.KEYDOWN:
-            idx = key_map.index(event.key)
-            self.keys[idx] = True
-        if event.type == pygame.KEYUP:
+        if evt.type == pygame.KEYDOWN:
             try:
-                idx = key_map.index(event.key)
+                idx = self._key_map.index(evt.key)
+                self.keys[idx] = True
+            except ValueError:
+                print("Illegal key down: ", evt.key)
+        if evt.type == pygame.KEYUP:
+            try:
+                idx = self._key_map.index(evt.key)
                 self.keys[idx] = False
             except ValueError:
-                pass
+                print("Illegal key up: ", evt.key)
+
+    def update(self):
+        event = pygame.event.poll()
+        self._handle_event(event)
+
+    def wait_for_key(self):
+        self.render()
+        while True:
+            evt = pygame.event.wait()
+            self._handle_event(evt)
+            if evt.type == pygame.KEYDOWN:
+                try:
+                    return self._key_map.index(evt.key)
+                except ValueError:
+                    pass
 
     def finalize(self):
         pass
@@ -204,7 +226,7 @@ class PyGameDisplay:
             y = y + 1
 
         del px
-        
+
         screen = pygame.display.get_surface()
         scaled = pygame.transform.scale(self.surface, screen.get_size())
         screen.blit(scaled, (0, 0))
@@ -214,7 +236,7 @@ class PyGameDisplay:
         for bmp in sprite:
             y = y & (self.HEIGHT - 1)
             bx = x
-            for bit in [128,64,32,16,8,4,2,1]:
+            for bit in [128, 64, 32, 16, 8, 4, 2, 1]:
                 bx = bx & (self.WIDTH - 1)
                 c = self.buf[y][bx]
                 n = bmp & bit
@@ -225,30 +247,32 @@ class PyGameDisplay:
                 bx = bx + 1
             y = y + 1
 
+
 class IllegalOp(Exception):
     def __init__(self, op, addr):
         super().__init__(f"Unsupported opcode: 0x{op:04X}, at 0x{addr:04X}")
         self.op = op
         self.addr = addr
 
+
 class VM:
     digits = [
-        [ 0xF0, 0x90, 0x90, 0x90, 0xF0 ],  # 0
-        [ 0x20, 0x60, 0x20, 0x20, 0x70 ],  # 1
-        [ 0xF0, 0x10, 0xF0, 0x80, 0xF0 ],  # 2
-        [ 0xF0, 0x10, 0xF0, 0x10, 0xF0 ],  # 3
-        [ 0x90, 0x90, 0xF0, 0x10, 0x10 ],  # 4
-        [ 0xF0, 0x80, 0xF0, 0x10, 0xF0 ],  # 5
-        [ 0xF0, 0x80, 0xF0, 0x90, 0xF0 ],  # 6
-        [ 0xF0, 0x10, 0x20, 0x40, 0x40 ],  # 7
-        [ 0xF0, 0x90, 0xF0, 0x90, 0xF0 ],  # 8
-        [ 0xF0, 0x90, 0xF0, 0x10, 0xF0 ],  # 9
-        [ 0xF0, 0x90, 0xF0, 0x90, 0x90 ],  # A
-        [ 0xE0, 0x90, 0xE0, 0x90, 0xE0 ],  # B
-        [ 0xF0, 0x80, 0x80, 0x80, 0xF0 ],  # C
-        [ 0xE0, 0x90, 0x90, 0x90, 0xE0 ],  # D
-        [ 0xF0, 0x80, 0xF0, 0x80, 0xF0 ],  # E 
-        [ 0xF0, 0x80, 0xF0, 0x80, 0x80 ]   # F
+        [0xF0, 0x90, 0x90, 0x90, 0xF0],  # 0
+        [0x20, 0x60, 0x20, 0x20, 0x70],  # 1
+        [0xF0, 0x10, 0xF0, 0x80, 0xF0],  # 2
+        [0xF0, 0x10, 0xF0, 0x10, 0xF0],  # 3
+        [0x90, 0x90, 0xF0, 0x10, 0x10],  # 4
+        [0xF0, 0x80, 0xF0, 0x10, 0xF0],  # 5
+        [0xF0, 0x80, 0xF0, 0x90, 0xF0],  # 6
+        [0xF0, 0x10, 0x20, 0x40, 0x40],  # 7
+        [0xF0, 0x90, 0xF0, 0x90, 0xF0],  # 8
+        [0xF0, 0x90, 0xF0, 0x10, 0xF0],  # 9
+        [0xF0, 0x90, 0xF0, 0x90, 0x90],  # A
+        [0xE0, 0x90, 0xE0, 0x90, 0xE0],  # B
+        [0xF0, 0x80, 0x80, 0x80, 0xF0],  # C
+        [0xE0, 0x90, 0x90, 0x90, 0xE0],  # D
+        [0xF0, 0x80, 0xF0, 0x80, 0xF0],  # E
+        [0xF0, 0x80, 0xF0, 0x80, 0x80],  # F
     ]
 
     def __init__(self, display=None):
@@ -256,7 +280,7 @@ class VM:
         self.display = display
         self.stack = deque()
         self.reg = bytearray(REGISTER_COUNT)
-        
+
         # Copy digits to interpreter area of the RAM
         idx = 0
         for digit in VM.digits:
@@ -284,13 +308,14 @@ class VM:
     def load(self, path, addr=0x200):
         with open(path, "rb") as f:
             data = f.read()
-        self.ram[addr:addr+len(data)] = data
+        self.ram[addr : addr + len(data)] = data
         return len(data)
 
     def disassemble(self, start, length):
         for i in range(0, length, 2):
             op = (self.ram[start + i] << 8) | self.ram[start + i + 1]
-            print(f"{i:04X}: {op:04X} {format_opcode(op)}")
+            adr = i + start
+            print(f"{adr:04X}: {op:04X} {format_opcode(op)}")
 
     def step(self):
         if self.display:
@@ -309,7 +334,7 @@ class VM:
 
         if prefix == 0x00:
             if op == 0x00E0:  # CLS
-                raise Exception("FIXME: CLS not implemented")
+                self.display.clear()
             if op == 0x00EE:  # RET
                 self.pc = self.stack.pop()
             else:  # SYS addr
@@ -328,14 +353,23 @@ class VM:
         elif prefix == 0x4:  # SNE Vx, byte
             if self.reg[x] != kk:
                 self.pc += 2
+        elif prefix == 0x5:
+            if op & 0xF != 0:
+                raise IllegalOp(op, op_addr)
+            if self.reg[x] == self.reg[y]:
+                self.pc += 2
         elif prefix == 0x6:  # LD Vx, byte
             self.reg[x] = kk
         elif prefix == 0x7:  # ADD Vx, byte
             self.reg[x] = (self.reg[x] + kk) & 0xFF
         elif 0x8000 == op & 0xF00F:  # LD Vx, Vy
             self.reg[x] = self.reg[y]
+        elif 0x8001 == op & 0xF00F:  # OR Vx, Vy
+            self.reg[x] = self.reg[x] | self.reg[y]
         elif 0x8002 == op & 0xF00F:  # AND Vx, Vy
             self.reg[x] = self.reg[x] & self.reg[y]
+        elif 0x8003 == op & 0xF00F:  # XOR Vx, Vy
+            self.reg[x] = self.reg[x] ^ self.reg[y]
         elif 0x8004 == op & 0xF00F:  # ADD Vx, Vy
             r = self.reg[x] + self.reg[y]
             self.reg[x] = r & 0xFF
@@ -344,29 +378,56 @@ class VM:
             r = self.reg[x] - self.reg[y]
             self.reg[x] = r & 0xFF
             self.reg[0xF] = 0 if r < 0 else 1
+        elif 0x8006 == op & 0xF00F:  # SHR Vx {, Vy}
+            # Originaly undocumented. See 0x800E.
+            self.reg[0xF] = self.reg[x] & 1
+            self.reg[x] = self.reg[x] >> 1
+        elif 0x800E == op & 0xF00F:  # SHL Vx {, Vy}
+            # Note that this op was originally undocumented and
+            # the spec is a bit unclear regarding the Vy register.
+            self.reg[0xF] = self.reg[x] >> 7
+            self.reg[x] = (self.reg[x] & 0x7F) << 1
+        elif 0x8007 == op & 0xF00F:  # SUBN Vx, Vy
+            r = self.reg[y] - self.reg[x]
+            self.reg[x] = r & 0xFF
+            self.reg[0xF] = 0 if r < 0 else 1
+        elif 0x9000 == op & 0xF00F:  # SNE Vx, Vy
+            if self.reg[x] != self.reg[y]:
+                self.pc += 2
         elif prefix == 0xA:  # LD I, addr
             self.i = nnn
         elif prefix == 0xC:  # RND Vx, byte
             self.reg[x] = randint(0, 255) & kk
         elif prefix == 0xD:  # DRW Vx, Vy, nibble
             q = op & 0xF
-            self.display.sprite(self.reg[x], self.reg[y], self.ram[self.i:self.i+q])
+            self.display.sprite(self.reg[x], self.reg[y], self.ram[self.i : self.i + q])
             # raise Exception("%d %s" % (q, str(self.ram[self.i:self.i + q])))
-        elif op & 0xF0FF == 0xE0A1:  # SKNP Vx
+        elif 0xE09E == op & 0xF0FF:  # SKP Vx
             if self.display.keys[self.reg[x]]:
                 self.pc += 2
+        elif op & 0xF0FF == 0xE0A1:  # SKNP Vx
+            if not self.display.keys[self.reg[x]]:
+                self.pc += 2
+        elif op & 0xF0FF == 0xF00A:  # LD Vx, K
+            self.reg[x] = self.display.wait_for_key()
         elif op & 0xF0FF == 0xF007:  # LD Vx, DT
             self.reg[x] = self.delay_timer
         elif op & 0xF0FF == 0xF015:  # LD DT, Vx
             self.delay_timer = self.reg[x]
         elif op & 0xF0FF == 0xF018:  # LD ST, Vx
             self.sound_timer = self.reg[x]
+        elif op & 0xF0FF == 0xF01E:  # ADD I, Vx
+            self.i = (self.i + self.reg[x]) & 0xFF
         elif op & 0xF0FF == 0xF033:  # LD B, Vx
             # Store BCD representation of Vx at I, I+1 and I+2
             v = self.reg[x]
             self.ram[self.i] = v // 100
             self.ram[self.i + 1] = (v % 100) // 10
-            self.ram[self.i + 2] = (v % 10)
+            self.ram[self.i + 2] = v % 10
+        elif op & 0xF0FF == 0xF055:  # LD [I], Vx
+            # Store registers V0 through Vx in memory starting at I
+            for n in range(0, x + 1):
+                self.ram[self.i + n] = self.reg[n]
         elif op & 0xF0FF == 0xF065:  # LD, Vx, [I]
             # Read registers V0 through Vx from memory starting at I
             for n in range(0, x + 1):
@@ -380,11 +441,11 @@ class VM:
 
     def jump(self, pc):
         self.pc = pc
-    
+
     def run(self):
         ts = time_ns()
         while True:
-            vm.step()
+            self.step()
             now = time_ns()
             if now - ts > 16_666_667:
                 self.display.render()
@@ -396,20 +457,40 @@ class VM:
                 ts = now
             sleep(0.0001)
 
-display = PyGameDisplay()
-vm = VM(display)
-length = vm.load("../rom/pong", 0x200)
-vm.jump(0x200)
-vm.disassemble(0x200, length)
-display.setup()
 
-try:
-    vm.run()
-except IllegalOp as e:
-    display.finalize()
-    print(e)
-    print("  Disassembled: ", format_opcode(e.op))
-except Exception as e:
-    display.finalize()
-    raise e
+def start(rom: str, start_address: int):
+    display = PyGameDisplay()
+    vm = VM(display)
+    length = vm.load(rom, start_address)
+    vm.jump(start_address)
+    vm.disassemble(start_address, length)
+    display.setup()
 
+    try:
+        vm.run()
+    except IllegalOp as e:
+        display.finalize()
+        print(e)
+        print("  Disassembled: ", format_opcode(e.op))
+    except Exception as e:
+        display.finalize()
+        raise e
+
+
+parser = argparse.ArgumentParser(
+    description="Moe CHIP-8 emulator (Python version)",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+
+parser.add_argument("rom", help="ROM file to load")
+parser.add_argument(
+    "--start",
+    "-s",
+    help="Start address",
+    default="0x200",
+    type=lambda x: int(x, 0),
+)
+
+args = parser.parse_args()
+
+start(args.rom, args.start)
