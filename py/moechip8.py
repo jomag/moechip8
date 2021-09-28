@@ -307,7 +307,7 @@ class VM:
         [0xF0, 0x80, 0xF0, 0x80, 0x80],  # F
     ]
 
-    def __init__(self, display: PyGameDisplay, frequency=500, wrap=False):
+    def __init__(self, display: PyGameDisplay, frequency=700, wrap=False):
         self.ram = bytearray(MEMORY_SIZE)
         self.display = display
         self.stack = deque()
@@ -539,7 +539,7 @@ parser.add_argument(
     "--freq",
     "-f",
     help="Frequency in Hz",
-    default=500,
+    default=700,
     type=autoint,
 )
 parser.add_argument(
