@@ -1,10 +1,14 @@
 
 AS=kickass
-EMU=/Applications/vice-sdl2-3.4-r37694/VICE.app/Contents/Resources/bin/x64sc
-EMU_FLAGS=-autostartprgmode 1 -initbreak 4000
+AS_FLAGS=-vicesymbols
 
-hello.prg: hello.asm
-	$(AS) hello.asm
+EMU=~/c64/ViceGTK/bin/x64sc
+EMU_FLAGS=-autostartprgmode 1 -initbreak 4000 --moncommands hello.vs
+
+SRCS=hello.asm video.asm chip8.asm
+
+hello.prg: $(SRCS)
+	$(AS) hello.asm $(AS_FLAGS)
 
 run: hello.prg
 	$(EMU) $(EMU_FLAGS) hello.prg

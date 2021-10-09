@@ -1,3 +1,6 @@
+#importonce
+
+#import "registers.asm"
 
 vram_row_lo:
         .byte <VRAM,     <VRAM+40,  <VRAM+80,  <VRAM+120, <VRAM+160
