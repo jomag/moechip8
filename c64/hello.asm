@@ -12,74 +12,33 @@ start:
 
         lda #pixel_00_00
         jsr vmem_fill
+        
+        jsr chip8_clear_screen
 
-        // Draw some digits
-        lda #<font
-        sta ZP_ADR2_LO
-        lda #>font
-        sta ZP_ADR2_HI
-        lda #0
-        sta ZP_PARAM1
-        lda #0
-        sta ZP_PARAM2
-        lda #5
-        sta ZP_PARAM3
-        jsr chip8_draw_sprite
+        // // Load the IBM ROM
+        // lda #<rom_ibm
+        // sta ZP_ADR_LO
+        // lda #>rom_ibm
+        // sta ZP_ADR_HI
+        // lda rom_ibm_size
+        // sta ZP_PARAM1
+        // jsr chip8_load_rom
 
-        lda #<font+5
-        sta ZP_ADR2_LO
-        lda #>font+5
-        sta ZP_ADR2_HI
-        lda #5
-        sta ZP_PARAM1
-        lda #0
-        sta ZP_PARAM2
-        lda #5
-        sta ZP_PARAM3
-        jsr chip8_draw_sprite
+        // Load the first test rom
+        // lda #<rom_test1
+        // sta ZP_ADR_LO
+        // lda #>rom_test1
+        // sta ZP_ADR_HI
+        // lda rom_test1_size
+        // sta ZP_PARAM1
+        // jsr chip8_load_rom
 
-        lda #<font+10
-        sta ZP_ADR2_LO
-        lda #>font+10
-        sta ZP_ADR2_HI
-        lda #10
-        sta ZP_PARAM1
-        lda #0
-        sta ZP_PARAM2
-        lda #5
-        sta ZP_PARAM3
-        jsr chip8_draw_sprite
-
-        lda #<font+15
-        sta ZP_ADR2_LO
-        lda #>font+15
-        sta ZP_ADR2_HI
-        lda #15
-        sta ZP_PARAM1
-        lda #0
-        sta ZP_PARAM2
-        lda #5
-        sta ZP_PARAM3
-        jsr chip8_draw_sprite
-
-        lda #<font+20
-        sta ZP_ADR2_LO
-        lda #>font+20
-        sta ZP_ADR2_HI
-        lda #20
-        sta ZP_PARAM1
-        lda #0
-        sta ZP_PARAM2
-        lda #5
-        sta ZP_PARAM3
-        jsr chip8_draw_sprite
-
-        // Load the IBM ROM
-        lda #<rom_ibm
+        // Load the second test rom
+        lda #<rom_test2
         sta ZP_ADR_LO
-        lda #>rom_ibm
+        lda #>rom_test2
         sta ZP_ADR_HI
-        lda rom_ibm_size
+        lda rom_test2_size
         sta ZP_PARAM1
         jsr chip8_load_rom
 

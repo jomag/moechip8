@@ -13,17 +13,25 @@ _first_nibble_jump_table:
         .word _opC-1, _opD-1, _opE-1, _opF-1
 
 !next:
-        inc chip8_pc_lo
-        bne !+
+        clc
+        lda chip8_pc_lo
+        adc #2
+        sta chip8_pc_lo
+        bcc chip8_run
         inc chip8_pc_hi
-!:      inc chip8_pc_lo
-        bne chip8_run
-        inc chip8_pc_hi
+
+// This was my first approach. Check cycles to see which is faster!
+//         inc chip8_pc_lo
+//         bne !+
+//         inc chip8_pc_hi
+// !:      inc chip8_pc_lo
+//         bne chip8_run
+//         inc chip8_pc_hi
 
 chip8_run:
         // FIXME: use chip8_update_status instead and make it optional
-        // jsr chip8_print_status
-        // jsr wait_for_key
+        jsr chip8_print_status
+        jsr wait_for_key
 
         // Load first nible into accumulator and use it
         // with the first-nibble jump table. Note that since
@@ -87,13 +95,14 @@ _op1:   // 1NNN => jump to NNN (set PC to NNN)
         lda (chip8_pc), y
         clc
         adc #<chip8_mem
-        sta chip8_pc_lo
+        tax
 
         dey
         lda (chip8_pc), y
         and #$0f
         adc #>chip8_mem
         sta chip8_pc_hi
+        stx chip8_pc_lo
 
         // As this op has changed PC we go directly to
         // `chip8_run` instead of `!next-`.
@@ -103,18 +112,86 @@ _op2:
         .break
         lda #$b2
         jmp _unimplemented_op
-_op3:
-        .break
-        lda #$b3
-        jmp _unimplemented_op
-_op4:
-        .break
-        lda #$b4
-        jmp _unimplemented_op
-_op5:
-        .break
-        lda #$b5
-        jmp _unimplemented_op
+
+_op3:   // 3XNN => skip next instruction if VX == NN
+
+        // Load value of CHIP8 register X
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+        
+        // Compare with NN
+        iny
+        cmp (chip8_pc), y
+        beq !+
+        jmp !next-
+
+        // Skip next instruction
+!:      clc
+        lda chip8_pc_lo
+        adc #4
+        sta chip8_pc_lo
+        bcc chip8_run
+        inc chip8_pc_hi
+        jmp chip8_run
+
+_op4:   // 4XNN => skip next instruction if VX != NN
+
+        // Load value of CHIP8 register X
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+        
+        // Compare with NN
+        iny
+        cmp (chip8_pc), y
+        bne !+
+        jmp !next-
+
+        // Skip next instruction
+!:      clc
+        lda chip8_pc_lo
+        adc #4
+        sta chip8_pc_lo
+        bcc !+
+        inc chip8_pc_hi
+!:      jmp chip8_run
+
+_op5:   // 5XY0 => skip next instruction if VX == VY
+
+        // Load value of CHIP8 register X into ZP_PARAM1
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+        sta ZP_PARAM1
+        
+        // Compare with value of CHIP8 register Y
+        iny
+        lda (chip8_pc), y
+        lsr
+        lsr
+        lsr
+        lsr
+        tax
+        lda ZP_PARAM1
+        cmp chip8_registers, x
+        beq !+
+        jmp !next-
+
+        // Skip next instruction
+!:      clc
+        lda chip8_pc_lo
+        adc #4
+        sta chip8_pc_lo
+        bcc !+
+        inc chip8_pc_hi
+!:      jmp chip8_run
 
 _op6:   // 6XNN => set register X to NN
         ldy #0
@@ -143,6 +220,7 @@ _op7:   // 7XNN => Add NN to register X
 
         // Add ZP_TMP to acc and write to register X.
         lda ZP_TMP
+        clc
         adc chip8_registers, x
         sta chip8_registers, x
 
@@ -152,10 +230,38 @@ _op8:
         .break
         lda #$b8
         jmp _unimplemented_op
-_op9:
-        .break
-        lda #$b9
-        jmp _unimplemented_op
+
+_op9:   // 9XY0 => skip next instruction if VX != VY
+
+        // Load value of CHIP8 register X into ZP_TMP
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+        sta ZP_TMP
+        
+        // Compare with value of CHIP8 register Y
+        iny
+        lda (chip8_pc), y
+        lsr
+        lsr
+        lsr
+        lsr
+        tax
+        lda ZP_TMP
+        cmp chip8_registers, x
+        bne !+
+        jmp !next-
+
+        // Skip next instruction
+!:      clc
+        lda chip8_pc_lo
+        adc #4
+        sta chip8_pc_lo
+        bcc !+
+        inc chip8_pc_hi
+!:      jmp chip8_run
 
 _opA:   // ANNN => set index register to NNN
         ldy #0
@@ -225,15 +331,65 @@ _opE:
         jmp _unimplemented_op
 
 _opF:   // FXCC => subcommand CC
-        ldy #0
+        ldy #1
         lda (chip8_pc), y
-        tax
 
-        iny
-        lda (chip8_pc), y
-        tay
+        cmp #$0a
+        beq _opFx0A
 
-        cmp #$07
+        cmp #$29
+        beq _opFx29
 
         lda #$bf
         jmp _unimplemented_op
+
+_opFx0A:
+        // FX0A => wait for key to be pressed and set register X
+        //         to its value
+        
+        // FIXME: The current implementation only reads the space
+        //        key and always set register X to 1.
+
+        lda #$7f
+        sta $DC00
+        lda $DC01
+        and #$10
+
+        // Instead of blocking here, we execute the same operation
+        // over and over until a key has been pressed.
+        bne !+
+        jmp chip8_run
+
+        // Key press detected!
+!:      ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda #1  // <--- should be the pressed key! FIXME
+        sta chip8_registers, x
+
+        jmp !next-
+
+_opFx29:
+        // FX29 => Set the I-register to point at the glyph data
+        //         of the character in register X. Only the low
+        //         nibble of register X is used.
+
+        // Load value of register X
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+
+        // Use only low nibble
+        and #$0f
+
+        // Load glyph offset from table
+        tax
+        lda glyph_offset_table, x
+        sta chip8_index_lo
+        lda glyph_offset_table + 1, x
+        sta chip8_index_hi
+
+        jmp !next-

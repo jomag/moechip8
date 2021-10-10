@@ -39,6 +39,9 @@ font:
         .byte $F0, $80, $F0, $80, $F0  // E
         .byte $F0, $80, $F0, $80, $80  // F
 
+glyph_offset_table:
+        .fillword 16, font_offset + i * 5
+
 pixel_characters:
         .byte $00, $00, $00, $00, $00, $00, $00, $00 // 00 00 
         // .byte $00, $42, $00, $00, $00, $00, $42, $00 // 00 00 (alternate)
@@ -61,6 +64,8 @@ pixel_characters:
 // The CHIP8 memory
 chip8_mem:
         .fill 4096, 0
+
+.print "CHIP8 memory: $" + toHexString(chip8_mem, 4)
 
 // --- chip8_init_charset ---------------------------------
 chip8_init_charset:

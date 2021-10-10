@@ -37,12 +37,20 @@ chip8_update_status:
         lda #<chip8_debug_offset
         sta ZP_ADR_LO
 
-        // Print PC
-        ldy #3
+        // Print PC, with CHIP8 memory offset subtracted
+        sec
+        lda chip8_pc_lo
+        sbc #<chip8_mem
+        sta ZP_PARAM1
         lda chip8_pc_hi
+        sbc #>chip8_mem
+        sta ZP_PARAM2
+
+        ldy #3
+        lda ZP_PARAM2
         jsr chip8_print_byte
         ldy #5
-        lda chip8_pc_lo
+        lda ZP_PARAM1
         jsr chip8_print_byte
 
         // Print op
