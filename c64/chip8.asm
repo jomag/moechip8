@@ -4,6 +4,7 @@
 #import "video.asm"
 #import "chip8_op.asm"
 #import "chip8_debug.asm"
+#import "utils.asm"
 
 .const pixel_00_00 = 128
 .const pixel_10_00 = 129
@@ -15,6 +16,7 @@
 .const font_offset = $50
 .const font_glyph_count = 16
 .const font_glyph_size = 5
+.const chip8_stack_size = 32
 
 // Where games will be loaded into RAM, as an
 // offset from the CHIP8 memory buffer
@@ -64,6 +66,9 @@ pixel_characters:
 // The CHIP8 memory
 chip8_mem:
         .fill 4096, 0
+        
+chip8_stack:
+        .fillword chip8_stack_size, 0
 
 .print "CHIP8 memory: $" + toHexString(chip8_mem, 4)
 
@@ -101,20 +106,20 @@ chip8_init_charset:
 
 chip8_create_characters:
         lda #<pixel_characters
-        sta ZP_ADR_LO
+        sta zp_w0_lo
         lda #>pixel_characters
-        sta ZP_ADR_HI
+        sta zp_w0_hi
 
         lda #<$3000 + pixel_00_00 * 8
-        sta ZP_ADR2_LO
+        sta zp_w1_lo
         lda #>$3000 + pixel_00_00 * 8
-        sta ZP_ADR2_HI
+        sta zp_w1_hi
 
         ldy #0
         ldx #0
 !loop:
-        lda (ZP_ADR), Y
-        sta (ZP_ADR2), Y
+        lda (zp_w0), Y
+        sta (zp_w1), Y
         iny
         tya
         cpy 8 * 5
@@ -125,6 +130,7 @@ chip8_create_characters:
 // --- chip8_set_pixel ------------------------------------
 // ZP_PARAM1: X coordinate
 // ZP_PARAM2: Y coordinate
+// Destroys: zp_w0
 chip8_set_pixel:
         // Reg Y = X-coord / 2
         lda ZP_PARAM1
@@ -136,11 +142,11 @@ chip8_set_pixel:
         lsr
         tax
 
-        // Point ZP_ADR at table of video RAM rows, indexed by Y-coordinate / 2
+        // Point `zp_w0` at table of video RAM rows, indexed by Y-coordinate / 2
         lda vram_row_lo, X
-        sta ZP_ADR_LO
+        sta zp_w0_lo
         lda vram_row_hi, X
-        sta ZP_ADR_HI
+        sta zp_w0_hi
 
         // If first bit of X-coordinate is set ...
         lda ZP_PARAM1
@@ -172,12 +178,12 @@ chip8_set_pixel__x1_y1:
 
 chip8_set_pixel__set:
         // Replace the character with same character, bitwise OR-ed with A 
-        ora (ZP_ADR), Y
-        sta (ZP_ADR), Y
+        ora (zp_w0), Y
+        sta (zp_w0), Y
         rts
 
 // Draw sprite on screen
-// ZP_ADR2 (ZP_ADR2_HI + ZP_ADR2_LO): pointer to the sprite
+// zp_w1: pointer to the sprite
 // ZP_PARAM1: X position
 // ZP_PARAM2: Y position
 // ZP_PARAM3: height of the sprite
@@ -188,7 +194,7 @@ chip8_draw_sprite:
 
 !next_row:
         ldy #0
-        lda (ZP_ADR2), Y
+        lda (zp_w1), Y
         sta ZP_TMP
 
         and #128
@@ -254,9 +260,9 @@ chip8_draw_sprite:
         // Jump to next row
         inc ZP_PARAM2
 
-        inc ZP_ADR2_LO
+        inc zp_w1_lo
         bne !+
-        inc ZP_ADR2_HI
+        inc zp_w1_hi
 !:
  
         // Decrement the row count and draw the next row if not finished
@@ -315,6 +321,8 @@ chip8_reset:
         sta chip8_registers + $f
         sta chip8_index_lo
         sta chip8_index_hi
+        sta chip8_sp
+        sta chip8_vm_flags
 
         lda #<chip8_mem + chip8_game_offset
         sta chip8_pc_lo
@@ -324,27 +332,16 @@ chip8_reset:
 
 // Load ROM into CHIP-8 memory
 // Parameters:
-// ZP_ADR: point to ROM data
-// ZP_PARAM1: length of ROM data
-//
-// FIXME: Handles only ROM sizes up to 255 bytes.
-// FIXME: Probably super inefficient!
+// zp_w0: point to ROM data
+// zp_w2: length of ROM data
 chip8_load_rom:
         jsr chip8_reset
 
-        lda ZP_PARAM1
-        tay
-        tax
-!loop:
-        dex
-        dey
-        lda (ZP_ADR), y
-        sta (chip8_mem + chip8_game_offset), x
-
-        tya
-        cmp #0
-        bne !loop-
- 
+        lda #<chip8_mem + chip8_game_offset
+        sta zp_w1_lo
+        lda #>chip8_mem + chip8_game_offset
+        sta zp_w1_hi
+        jsr copy_mem 
         rts
 
 // Clear the CHIP8 screen
@@ -353,3 +350,10 @@ chip8_clear_screen:
         jsr vmem_fill
         rts
 
+chip8_enable_stepping:
+        lda chip8_vm_flags
+        ora CHIP8_STEPPING_FLAG
+        sta chip8_vm_flags
+        jsr chip8_print_status
+        rts
+        

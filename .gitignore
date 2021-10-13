@@ -2,3 +2,6 @@
 *.sym
 *.dbg
 *.vs
+.source.txt
+.source.vs
+

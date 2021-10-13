@@ -2,7 +2,7 @@
 
 #import "registers.asm"
 
-.var legend_str = "pc:.... op:.... i:...."
+.var legend_str = "pc:.... op:.... i:.... sp:.."
 
 .label chip8_debug_offset = VRAM + 40 * 22
 
@@ -33,9 +33,9 @@ chip8_print_status:
 chip8_update_status:
         // First line ...
         lda #>chip8_debug_offset
-        sta ZP_ADR_HI
+        sta zp_w0_hi
         lda #<chip8_debug_offset
-        sta ZP_ADR_LO
+        sta zp_w0_lo
 
         // Print PC, with CHIP8 memory offset subtracted
         sec
@@ -72,11 +72,16 @@ chip8_update_status:
         lda chip8_index_lo
         jsr chip8_print_byte
 
+        // Print stack pointer
+        ldy #26
+        lda chip8_sp
+        jsr chip8_print_byte
+
         // Next line...
         lda #>chip8_debug_offset + 40
-        sta ZP_ADR_HI
+        sta zp_w0_hi
         lda #<chip8_debug_offset + 40
-        sta ZP_ADR_LO
+        sta zp_w0_lo
 
         // Print all registers
         ldy #0
@@ -121,9 +126,9 @@ chip8_update_status:
 
         // Next line...
         lda #>chip8_debug_offset + 80
-        sta ZP_ADR_HI
+        sta zp_w0_hi
         lda #<chip8_debug_offset + 80
-        sta ZP_ADR_LO
+        sta zp_w0_lo
 
         // Print all registers
         ldy #8
@@ -186,6 +191,6 @@ chip8_print_byte:
 !letter:
         sbc #$09        // $A - $9 == $1 == "A" in PETSCII
 !print:
-        sta (ZP_ADR), y
+        sta (zp_w0), y
         iny
         rts

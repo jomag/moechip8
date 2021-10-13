@@ -20,19 +20,19 @@ vram_row_hi:
 vmem_set_char:
         pha
         lda vram_row_lo, X
-        sta ZP_ADR_LO
+        sta zp_w0_lo
         lda vram_row_hi, X
-        sta ZP_ADR_HI
+        sta zp_w0_hi
         pla
-        sta (ZP_ADR), Y
+        sta (zp_w0), Y
         rts
 
 vmem_get_char:
         lda vram_row_lo, X
-        sta ZP_ADR_LO
+        sta zp_w0_lo
         lda vram_row_hi, X
-        sta ZP_ADR_HI
-        lda (ZP_ADR), Y
+        sta zp_w0_hi
+        lda (zp_w0), Y
         rts
 
 vmem_fill:
@@ -51,27 +51,27 @@ vmem_copy_charset:
 
         // Source
         lda #$00
-        sta ZP_ADR_LO
+        sta zp_w0_lo
         lda #$d0
-        sta ZP_ADR_HI
+        sta zp_w0_hi
 
         // Target
         lda #$00
-        sta ZP_ADR2_LO
+        sta zp_w1_lo
         lda #$30
-        sta ZP_ADR2_HI
+        sta zp_w1_hi
 
         ldx #0
         ldy #0
 
 _vmem_copy_charset__loop:
-        lda (ZP_ADR), Y
-        sta (ZP_ADR2), Y
+        lda (zp_w0), y
+        sta (zp_w1), y
         iny
         bne _vmem_copy_charset__loop
 
-        inc ZP_ADR_HI
-        inc ZP_ADR2_HI
+        inc zp_w0_hi
+        inc zp_w1_hi
         inx
         cpx #8
         bne _vmem_copy_charset__loop

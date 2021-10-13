@@ -12,6 +12,12 @@ _first_nibble_jump_table:
         .word _op8-1, _op9-1, _opA-1, _opB-1
         .word _opC-1, _opD-1, _opE-1, _opF-1
 
+_op8_jump_table:
+        .word _op8XY0-1, _op8XY1-1, _op8XY2-1, _op8XY3-1
+        .word _op8XY4-1, _op8XY5-1, _op8_todo-1, _op8_todo-1
+        .word _op8_todo-1, _op8_todo-1, _op8_todo-1, _op8_todo-1
+        .word _op8_todo-1, _op8_todo-1, _op8_todo-1, _op8_todo-1
+
 !next:
         clc
         lda chip8_pc_lo
@@ -29,9 +35,14 @@ _first_nibble_jump_table:
 //         inc chip8_pc_hi
 
 chip8_run:
-        // FIXME: use chip8_update_status instead and make it optional
-        jsr chip8_print_status
+        // Show debug info and use single instruction stepping
+        // if the stepping flag is set
+        lda chip8_vm_flags
+        and CHIP8_STEPPING_FLAG
+        beq !+
+        jsr chip8_update_status
         jsr wait_for_key
+!:
 
         // Load first nible into accumulator and use it
         // with the first-nibble jump table. Note that since
@@ -87,8 +98,36 @@ _op0:
 
         // 00EE: return from subroutine
 !:      cmp #$ee
-        bne _invalid_op
-        jmp _unimplemented_op
+        bne !+
+
+        dec chip8_sp
+        dec chip8_sp
+        lda chip8_sp
+        tax
+        lda chip8_stack, x
+        sta chip8_pc_lo
+        lda chip8_stack + 1, x
+        sta chip8_pc_hi
+        jmp !next-
+
+!:      bne _invalid_op
+
+_op2:   // 2NNN => call subroutine at NNN, pushing PC to stack
+
+        // Push PC to stack
+        lda chip8_sp
+        tax
+        lda chip8_pc_lo
+        sta chip8_stack, x
+        lda chip8_pc_hi
+        sta chip8_stack + 1, x
+
+        // Increment stafck point
+        inc chip8_sp
+        inc chip8_sp
+
+        // Fall through to _op1, as they work the same, except
+        // that 2NNN push PC first.
 
 _op1:   // 1NNN => jump to NNN (set PC to NNN)
         ldy #1
@@ -108,10 +147,6 @@ _op1:   // 1NNN => jump to NNN (set PC to NNN)
         // `chip8_run` instead of `!next-`.
         jmp chip8_run
 
-_op2:
-        .break
-        lda #$b2
-        jmp _unimplemented_op
 
 _op3:   // 3XNN => skip next instruction if VX == NN
 
@@ -133,9 +168,9 @@ _op3:   // 3XNN => skip next instruction if VX == NN
         lda chip8_pc_lo
         adc #4
         sta chip8_pc_lo
-        bcc chip8_run
+        bcc !+
         inc chip8_pc_hi
-        jmp chip8_run
+!:      jmp chip8_run
 
 _op4:   // 4XNN => skip next instruction if VX != NN
 
@@ -226,7 +261,114 @@ _op7:   // 7XNN => Add NN to register X
 
         jmp !next-
 
-_op8:
+_op8:   // 8XYC => Logical/arithmetical instructions
+
+        // Store value of CHIP8 register Y in ZP_TMP
+        ldy #1
+        lda (chip8_pc), y
+        lsr
+        lsr
+        lsr
+        lsr
+        tax
+        lda chip8_registers, x
+        sta ZP_TMP
+
+        // Jump to sub-op handler
+        lda (chip8_pc), y
+        and #$0f
+        asl
+        tax
+        lda _op8_jump_table + 1, x
+        pha
+        lda _op8_jump_table, x
+        pha
+        rts
+
+_op8XY0: // 8XY0 => Set VX to value of VY
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda ZP_TMP
+        sta chip8_registers, x
+        jmp !next-
+
+_op8XY1: // 8XY1 => Set VX to VX | VY
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+        ora ZP_TMP
+        sta chip8_registers, x
+        jmp !next-
+
+_op8XY2: // 8XY1 => Set VX to VX & VY
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+        and ZP_TMP
+        sta chip8_registers, x
+        jmp !next-
+
+_op8XY3: // 8XY1 => Set VX to VX ^ VY
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+        eor ZP_TMP
+        sta chip8_registers, x
+        jmp !next-
+
+_op8XY4: // 8XY1 => Set VX to VX + VY
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+        clc
+        adc ZP_TMP
+        sta chip8_registers, x
+
+        // Set VF to 1 if carry flag set, 0 if not
+        bcs !carry_set+
+        lda #0
+        sta chip8_regf
+        jmp !next-
+
+_op8XY5: // 8XY5 => Step VX to VX - VY
+        jsr chip8_enable_stepping
+
+        ldy #0
+        lda (chip8_pc), y
+        and #$0f
+        tax
+        lda chip8_registers, x
+
+        sec
+        sbc ZP_TMP
+        sta chip8_registers, x
+
+        // If VX > VY before the subtraction, set VF to 1.
+        // Else, set VF to 0.
+        bcc !+
+        lda #1
+        sta chip8_regf
+        jmp !next-
+!:      lda #0
+        sta chip8_regf
+        jmp !next-
+
+!carry_set:
+        lda #1
+        sta chip8_regf
+        jmp !next-
+
+_op8_todo:
         .break
         lda #$b8
         jmp _unimplemented_op
@@ -314,14 +456,14 @@ _opD:   // DXYN => Draw sprite
         and #$0f
         sta ZP_PARAM3
 
-        // Set ZP_ADR2 to CHIP8 memory offset + I
+        // Set `zp_w1` to CHIP8 memory offset + I
         clc
         lda #<chip8_mem
         adc chip8_index_lo
-        sta ZP_ADR2_LO
+        sta zp_w1_lo
         lda #>chip8_mem
         adc chip8_index_hi
-        sta ZP_ADR2_HI
+        sta zp_w1_hi
 
         jsr chip8_draw_sprite
         jmp !next-
