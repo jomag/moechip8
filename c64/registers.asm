@@ -3,6 +3,10 @@
 // Controls if the VM should run in debug mode and step through instructions
 .const CHIP8_STEPPING_FLAG = 1
 
+// 0: Compatibility with original CHIP-8 machine, the COSMAC
+// 1: Compatibility with CHIP-48, SUPER-CHIP, etc
+.const CHIP8_MODERN_FLAG = 2
+
 // Refactoring in progress:
 // This is same as ZP_ADR2.
 // But there's nothing special about this that

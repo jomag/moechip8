@@ -322,6 +322,8 @@ chip8_reset:
         sta chip8_index_lo
         sta chip8_index_hi
         sta chip8_sp
+
+        lda #CHIP8_MODERN_FLAG
         sta chip8_vm_flags
 
         lda #<chip8_mem + chip8_game_offset
@@ -352,7 +354,7 @@ chip8_clear_screen:
 
 chip8_enable_stepping:
         lda chip8_vm_flags
-        ora CHIP8_STEPPING_FLAG
+        ora #CHIP8_STEPPING_FLAG
         sta chip8_vm_flags
         jsr chip8_print_status
         rts

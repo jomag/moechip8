@@ -11,3 +11,7 @@ rom_test1_size: .word rom_test1_data.getSize()
 .var rom_test2_data = LoadBinary("../rom/test_opcode.ch8")
 rom_test2: .fill rom_test2_data.getSize(), rom_test2_data.get(i)
 rom_test2_size: .word rom_test2_data.getSize()
+
+.var invaders_data = LoadBinary("../rom/CHIP8/GAMES/INVADERS")
+rom_invaders: .fill invaders_data.getSize(), invaders_data.get(i)
+rom_invaders_size: .word invaders_data.getSize()

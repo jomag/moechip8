@@ -8,6 +8,12 @@ BasicUpstart2(start)
         * = $4000 "Main Program"
         
 start:
+//  Test key reading:
+//         lda #' '
+//         jsr vmem_fill
+// !:      jsr chip8_print_keys
+//         jmp !-
+
         jsr chip8_init_charset
 
         lda #pixel_00_00
@@ -38,17 +44,27 @@ start:
         // jsr chip8_load_rom
 
         // Load the second test rom
-        lda #<rom_test2
+        // lda #<rom_test2
+        // sta zp_w0_lo
+        // lda #>rom_test2
+        // sta zp_w0_hi
+        // lda rom_test2_size
+        // sta zp_w2_lo
+        // lda rom_test2_size + 1
+        // sta zp_w2_hi
+        // jsr chip8_load_rom
+
+        // Load Invaders
+        lda #<rom_invaders
         sta zp_w0_lo
-        lda #>rom_test2
+        lda #>rom_invaders
         sta zp_w0_hi
-        lda rom_test2_size
+        lda rom_invaders_size
         sta zp_w2_lo
-        lda rom_test2_size + 1
+        lda rom_invaders_size + 1
         sta zp_w2_hi
         jsr chip8_load_rom
 
-.break
-
+        jsr chip8_enable_stepping
         jsr chip8_run
         jmp *
