@@ -8,6 +8,13 @@ BasicUpstart2(start)
         * = $4000 "Main Program"
         
 start:
+        .break
+        lda #5
+        eor #4
+
+        lda #5
+        eor #2
+
 //  Test key reading:
 //         lda #' '
 //         jsr vmem_fill
@@ -22,15 +29,15 @@ start:
         jsr chip8_clear_screen
 
         // Load the IBM ROM
-        // lda #<rom_ibm
-        // sta zp_w0_lo
-        // lda #>rom_ibm
-        // sta zp_w0_hi
-        // lda rom_ibm_size
-        // sta zp_w2_lo
-        // lda rom_ibm_size + 1
-        // sta zp_w2_hi
-        // jsr chip8_load_rom
+        lda #<rom_ibm
+        sta zp_w0_lo
+        lda #>rom_ibm
+        sta zp_w0_hi
+        lda rom_ibm_size
+        sta zp_w2_lo
+        lda rom_ibm_size + 1
+        sta zp_w2_hi
+        jsr chip8_load_rom
 
         // Load the first test rom
         // lda #<rom_test1
@@ -55,16 +62,25 @@ start:
         // jsr chip8_load_rom
 
         // Load Invaders
-        lda #<rom_invaders
+        // lda #<rom_invaders
+        // sta zp_w0_lo
+        // lda #>rom_invaders
+        // sta zp_w0_hi
+        // lda rom_invaders_size
+        // sta zp_w2_lo
+        // lda rom_invaders_size + 1
+        // sta zp_w2_hi
+        // jsr chip8_load_rom
+
+        lda #<rom_blitz
         sta zp_w0_lo
-        lda #>rom_invaders
+        lda #>rom_blitz
         sta zp_w0_hi
-        lda rom_invaders_size
+        lda rom_blitz_size
         sta zp_w2_lo
-        lda rom_invaders_size + 1
+        lda rom_blitz_size + 1
         sta zp_w2_hi
         jsr chip8_load_rom
 
-        jsr chip8_enable_stepping
         jsr chip8_run
         jmp *

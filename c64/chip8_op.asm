@@ -4,6 +4,22 @@
 #import "registers.asm"
 #import "chip8_debug.asm"
 
+// 50 Hz refresh rate and 700 ops per second => 14 ops per frame
+.const chip8_ops_per_frame = 14
+
+// Timers decrement at 60 Hz. At 700 ops per second, the timers
+// should decrement roughly every 700 / 60 = 12'th operation.
+.const chip8_ops_per_60hz = 12
+
+// Op counter that decrements the timers when it reaches 0
+chip8_timer_op_count: .byte 0
+
+// Timer that decrements at 60 Hz and plays a sound until zero
+chip8_sound_timer: .byte 0
+
+// Timer that decrements at 60 Hz until zero
+chip8_timer: .byte 0
+
 // Load value of VX (second nibble of current op) into accumulator
 // Load second nibble into X
 // Destroys: A, X, Y
@@ -87,15 +103,64 @@ _op8_jump_table:
 //         inc chip8_pc_hi
 
 chip8_run:
-        // Show debug info and use single instruction stepping
-        // if the stepping flag is set
+        // Check if single-stepping
         lda chip8_vm_flags
         and #CHIP8_STEPPING_FLAG
-        beq !+
+        beq !no_single_stepping+
+
+        // Show debug info and use single instruction stepping
+        // if the stepping flag is set
         jsr chip8_update_status
         jsr wait_for_key
+
+!no_single_stepping:
+        // Decrement the ops-per-frame counter. If counter is
+        // zero, wait for vertical blanking.
+        dec chip8_frame_op_count
+        bne !update_timers+
+
+        // The fixed number of operations per frame has been reached.
+        // Reset the counter and wait for vertical blanking.
+        lda #chip8_ops_per_frame
+        sta chip8_frame_op_count
+
+        // Change border color
+        lda #14
+        sta $d020
+
+        // Wait for vertical blanking
+        sei
+        ldy #$80
+!vblank_loop:
+        cpy $d012
+        bne !vblank_loop-
+        cli
+
+        // Restore border color
+        lda #7
+        sta $d020
+
+!update_timers:
+        // Update sound and general purpose timer.
+        // They should both decrement 60 times per second.
+        // As the interpreter runs a fixed number of operations
+        // per frame, and the frame rate is fixed at 50 or 60 Hz,
+        // we can decrement the timers every n'th operation.
+        dec chip8_timer_op_count
+        bne !exec+
+
+        lda chip8_sound_timer
+        beq !+
+        dec chip8_sound_timer
+!:      lda chip8_timer
+        beq !+
+        dec chip8_timer
 !:
 
+        lda #chip8_ops_per_60hz
+        sta chip8_timer_op_count
+
+!exec:
         // Load first nible into accumulator and use it
         // with the first-nibble jump table. Note that since
         // each record in the jump table is 2 bytes, the
@@ -116,12 +181,14 @@ chip8_run:
         rts
 
 _invalid_op:
+        jsr chip8_print_status
         .break
         ldx #$de
         ldy #$ad
         jmp *
 
 _unimplemented_op:
+        jsr chip8_print_status
         .break
         ldx #$be
         ldy #$ef
@@ -414,8 +481,6 @@ _op8XY6:
         // VY := VX (only classic mode)
         // VF := VX LSB ? 1 : 0
         // VX := VX >> 1
-        jsr chip8_enable_stepping
-
         lda chip8_vm_flags
         and #CHIP8_MODERN_FLAG
         bne !common+
@@ -558,10 +623,12 @@ _opB:   // BNNN => Jump to address NNN + V0
 
         jmp chip8_run
 
-_opC:
-        .break
-        lda #$bc
-        jmp _unimplemented_op
+_opC:   // CXNN => Generate random number, AND it with NN and store in VX
+        jsr chip8_random
+        ldy #1
+        and (chip8_pc), y
+        sta_vx()
+        jmp !next-
 
 _opD:   // DXYN => Draw sprite
         // X is the index of the register that holds the horizontal position
@@ -641,8 +708,17 @@ _opF:   // FXCC => subcommand CC
         ldy #1
         lda (chip8_pc), y
 
+        cmp #$07
+        beq _opFx07
+
         cmp #$0a
         beq _opFx0A
+
+        cmp #$15
+        beq _opFx15
+
+        cmp #$18
+        beq _opFx18
 
         cmp #$1e
         beq _opFx1E
@@ -659,10 +735,17 @@ _opF:   // FXCC => subcommand CC
         jmp _opFx65
 
 !:      cmp #$33
-        beq _opFx33
+        bne !+
+        jmp _opFx33
 
-        lda #$bf
+!:      lda #$bf
         jmp _unimplemented_op
+
+_opFx07:
+        // FX07 => Set VX to value of delay timer
+        lda chip8_timer
+        sta_vx()
+        jmp !next-
 
 _opFx0A:
         // FX0A => wait for key to be pressed and set register X
@@ -688,6 +771,18 @@ _opFx0A:
         lda #1  // <--- should be the pressed key! FIXME
         sta chip8_registers, x
 
+        jmp !next-
+
+_opFx15:
+        // FX15 => Set delay timer to value of VX
+        lda_vx()
+        sta chip8_timer
+        jmp !next-
+
+_opFx18:
+        // FX18 => Set sound timer to value of VX
+        lda_vx()
+        sta chip8_sound_timer
         jmp !next-
 
 _opFx1E:

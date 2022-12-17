@@ -15,3 +15,7 @@ rom_test2_size: .word rom_test2_data.getSize()
 .var invaders_data = LoadBinary("../rom/CHIP8/GAMES/INVADERS")
 rom_invaders: .fill invaders_data.getSize(), invaders_data.get(i)
 rom_invaders_size: .word invaders_data.getSize()
+
+.var blitz_data = LoadBinary("../rom/CHIP8/GAMES/BLITZ")
+rom_blitz: .fill blitz_data.getSize(), blitz_data.get(i)
+rom_blitz_size: .word blitz_data.getSize()

@@ -22,6 +22,8 @@
 // offset from the CHIP8 memory buffer
 .const chip8_game_offset = $200
 
+chip8_frame_op_count: .byte chip8_ops_per_frame
+
 // The font sprites
 font:
         .byte $F0, $90, $90, $90, $F0  // 0
@@ -104,6 +106,25 @@ chip8_init_charset:
 
         rts
 
+// Seed the random number generator.
+// TODO: Ideally, this should only create a seed for the
+// random number generator to base its random sequence on.
+// That would allow using channel 3 once seeding is done.
+// Currently, however, chip8_random gets a new random
+// number form the SID for each call.
+chip8_seed_random:
+        lda $ff    // Maximum frequency value
+        sta $d40e  // Voice 3 frequency, low byte
+        sta $d40f  // Voice 3 frequency, high byte
+        lda #$80   // Noise waveform, gate bit off
+        sta $d412  // Voice 3 control registers
+        rts
+
+// Generate random number and return it in acc.
+chip8_random:
+        lda $d41b
+        rts
+
 chip8_create_characters:
         lda #<pixel_characters
         sta zp_w0_lo
@@ -127,11 +148,11 @@ chip8_create_characters:
 
         rts
 
-// --- chip8_set_pixel ------------------------------------
+// --- chip8_xor_pixel ------------------------------------
 // ZP_PARAM1: X coordinate
 // ZP_PARAM2: Y coordinate
 // Destroys: zp_w0
-chip8_set_pixel:
+chip8_xor_pixel:
         // Reg Y = X-coord / 2
         lda ZP_PARAM1
         lsr
@@ -151,35 +172,44 @@ chip8_set_pixel:
         // If first bit of X-coordinate is set ...
         lda ZP_PARAM1
         and #1
-        bne chip8_set_pixel__x1
+        bne chip8_xor_pixel__x1
 
-chip8_set_pixel__x0:
+chip8_xor_pixel__x0:
         // X-coordinate & 1 == 0
         lda ZP_PARAM2
         and #1
-        bne chip8_set_pixel__x0_y1
-chip8_set_pixel__x0_y0:
+        bne chip8_xor_pixel__x0_y1
+chip8_xor_pixel__x0_y0:
         lda #1
-        jmp chip8_set_pixel__set
-chip8_set_pixel__x0_y1:
+        jmp chip8_xor_pixel__set
+chip8_xor_pixel__x0_y1:
         lda #4
-        jmp chip8_set_pixel__set
+        jmp chip8_xor_pixel__set
 
-chip8_set_pixel__x1:
+chip8_xor_pixel__x1:
         // X-coordinate & 1 == 1
         lda ZP_PARAM2
         and #1
-        bne chip8_set_pixel__x1_y1
-chip8_set_pixel__x1_y0:
+        bne chip8_xor_pixel__x1_y1
+chip8_xor_pixel__x1_y0:
         lda #2
-        jmp chip8_set_pixel__set
-chip8_set_pixel__x1_y1:
+        jmp chip8_xor_pixel__set
+chip8_xor_pixel__x1_y1:
         lda #8
 
-chip8_set_pixel__set:
-        // Replace the character with same character, bitwise OR-ed with A 
-        ora (zp_w0), Y
-        sta (zp_w0), Y
+chip8_xor_pixel__set:
+        // Replace the character with same character, bitwise XOR-ed with A 
+        eor (zp_w0), y
+        cmp (zp_w0), y
+        sta (zp_w0), y
+        bpl !+
+
+        lda #1
+        sta chip8_regf
+        rts
+
+!:      lda #0
+        sta chip8_regf
         rts
 
 // Draw sprite on screen
@@ -199,56 +229,56 @@ chip8_draw_sprite:
 
         and #128
         beq !bit7+
-        jsr chip8_set_pixel
+        jsr chip8_xor_pixel
 
 !bit7:
         inc ZP_PARAM1
         lda ZP_TMP
         and #64
         beq !bit6+
-        jsr chip8_set_pixel
+        jsr chip8_xor_pixel
 
 !bit6:
         inc ZP_PARAM1
         lda ZP_TMP
         and #32
         beq !bit5+
-        jsr chip8_set_pixel
+        jsr chip8_xor_pixel
 
 !bit5:
         inc ZP_PARAM1
         lda ZP_TMP
         and #16
         beq !bit4+
-        jsr chip8_set_pixel
+        jsr chip8_xor_pixel
 
 !bit4:
         inc ZP_PARAM1
         lda ZP_TMP
         and #8
         beq !bit3+
-        jsr chip8_set_pixel
+        jsr chip8_xor_pixel
 
 !bit3:
         inc ZP_PARAM1
         lda ZP_TMP
         and #4
         beq !bit2+
-        jsr chip8_set_pixel
+        jsr chip8_xor_pixel
 
 !bit2:
         inc ZP_PARAM1
         lda ZP_TMP
         and #2
         beq !bit1+
-        jsr chip8_set_pixel
+        jsr chip8_xor_pixel
 
 !bit1:
         inc ZP_PARAM1
         lda ZP_TMP
         and #1
         beq !bit0+
-        jsr chip8_set_pixel
+        jsr chip8_xor_pixel
 
 !bit0:
         // Move cursor back 8 pixels on the row
@@ -323,6 +353,15 @@ chip8_reset:
         sta chip8_index_hi
         sta chip8_sp
 
+        sta chip8_sound_timer
+        sta chip8_timer
+
+        lda #chip8_ops_per_60hz
+        sta chip8_timer_op_count
+
+        lda #chip8_ops_per_frame
+        sta chip8_frame_op_count
+
         lda #CHIP8_MODERN_FLAG
         sta chip8_vm_flags
 
@@ -330,6 +369,8 @@ chip8_reset:
         sta chip8_pc_lo
         lda #>chip8_mem + chip8_game_offset
         sta chip8_pc_hi
+
+        jsr chip8_seed_random
         rts
 
 // Load ROM into CHIP-8 memory
